@@ -45,60 +45,60 @@ describe('receive transaction router', () => {
         receiveTransaction: get.receiveTransaction
       }))
 
-      def('receiveTransaction', () => (_local, _domain, _data, handlers) => {
-        handlers.ok()
+      def('receiveTransaction', () => (_local, _domain, _data) => {
+        return 'sometxid'
       })
 
       it('returns http status ok', async () => {
         await request(app)
           .post('/base-route/receive-transaction/name@domain.com')
-          .send({
-            transactions: [],
-            metadata: {}
-          })
+          .send({ hex: 'sometxencodedtx', metadata: {} })
           .expect(HttpStatus.OK)
       })
 
+      it('returns the response of the callback', async () => {
+        const response = await request(app)
+          .post('/base-route/receive-transaction/name@domain.com')
+          .send({
+            hex: 'somehex',
+            metadata: {}
+          })
+        expect(response.body).to.be.eql({ txid: 'sometxid', message: 'ok' })
+      })
+
       describe('callback parameters', () => {
-        let data = null
-        let handlers = null
         let localPart = null
         let domain = null
-        def('receiveTransaction', () => (receivedLocalPart, receivedDomain, receivedData, receivedHandlers) => {
+        let hexTx = null
+        let metadata = null
+        let reference = null
+        def('receiveTransaction', () => (receivedLocalPart, receivedDomain, receivedHexTx, receivedReference, receivedMetadata) => {
           localPart = receivedLocalPart
           domain = receivedDomain
-          data = receivedData
-          handlers = receivedHandlers
-          receivedHandlers.ok()
+          hexTx = receivedHexTx
+          metadata = receivedMetadata
+          reference = receivedReference
+          return 'sometxid'
         })
 
         it('receives the right parameters', async () => {
-          const transactions = [{ hex: 'aasdasd' }]
-          const metadata = {
+          const transaction = 'hexencodedtx'
+          const extraData = {
             data1: 'hello',
             data2: 'bye'
           }
-          const reference = 'somereference'
           await request(app)
             .post('/base-route/receive-transaction/name@domain.com')
             .send({
-              transactions,
-              metadata,
-              reference
+              hex: transaction,
+              metadata: extraData,
+              reference: 'someRef'
             })
-          expect(data).to.be.eql({
-            transactions,
-            metadata,
-            reference
-          })
-          expect(Object.keys(handlers)).to.have.members([
-            'ok',
-            'paymentError',
-            'notFound',
-            'unexpectedError'
-          ])
           expect(localPart).to.be.eql('name')
           expect(domain).to.be.eql('domain.com')
+          expect(hexTx).to.be.eql(transaction)
+          expect(metadata).to.be.eql(extraData)
+          expect(reference).to.be.eql('someRef')
         })
       })
 
@@ -106,9 +106,8 @@ describe('receive transaction router', () => {
         await request(app)
           .post('/base-route/receive-transaction/name@domain.com')
           .send({
-            transactions: undefined,
-            metadata: {},
-            reference: 'someid'
+            hex: undefined,
+            metadata: {}
           })
           .expect(HttpStatus.BAD_REQUEST)
       })
@@ -117,117 +116,10 @@ describe('receive transaction router', () => {
         await request(app)
           .post('/base-route/receive-transaction/name@domain.com')
           .send({
-            transactions: [],
-            metadata: undefined,
-            reference: 'someid'
+            hex: 'asdasds',
+            metadata: undefined
           })
           .expect(HttpStatus.BAD_REQUEST)
-      })
-
-      it('returns OK when refference is missing', async () => {
-        await request(app)
-          .post('/base-route/receive-transaction/name@domain.com')
-          .send({
-            transactions: [],
-            metadata: {},
-            reference: undefined
-          })
-          .expect(HttpStatus.OK)
-      })
-
-      it('returns BAD_REQUEST if any transaction object does not have hex attribute', async () => {
-        await request(app)
-          .post('/base-route/receive-transaction/name@domain.com')
-          .send({
-            transactions: [
-              {
-                hex: '0200000001831db7cbb5d97f2e97d2017fe6167b00099d33639d00c7993'
-              },
-              {
-                rawtx: '1483e994e708e4709696b82b5b7f2525a329ed5fa888ac00000000'
-              }
-            ],
-            metadata: {},
-            reference: 'someid'
-          })
-          .expect(HttpStatus.BAD_REQUEST)
-      })
-
-      it('returns BAD_REQUEST if any transaction object does has extra attributes', async () => {
-        await request(app)
-          .post('/base-route/receive-transaction/name@domain.com')
-          .send({
-            transactions: [
-              {
-                hex: '0200000001831db7cbb5d97f2e97d2017fe6167b00099d33639d00c7993'
-              },
-              {
-                hex: '1483e994e708e4709696b82b5b7f2525a329ed5fa888ac00000000',
-                extra: 'something'
-              }
-            ],
-            metadata: {},
-            reference: 'someid'
-          })
-          .expect(HttpStatus.BAD_REQUEST)
-      })
-
-      describe('and it calls notFound handler', () => {
-        def('receiveTransaction', () => (_local, _domain, _data, handlers) => {
-          return handlers.notFound()
-        })
-
-        it('returns NOT_FOUND status', async () => {
-          await request(app)
-            .post('/base-route/receive-transaction/name@domain.com')
-            .send({
-              transactions: [],
-              metadata: {}
-            })
-            .expect(HttpStatus.NOT_FOUND)
-        })
-
-        it('returns proper error body', async () => {
-          const response = await request(app)
-            .post('/base-route/receive-transaction/name@domain.com')
-            .send({
-              transactions: [],
-              metadata: {}
-            })
-          expect(response.body).to.be.eql({
-            code: 'not-found',
-            message: 'Paymail not found: name@domain.com'
-          })
-        })
-      })
-
-      describe('when the callback calls the paymentError handler', () => {
-        def('receiveTransaction', () => (_local, _domain, _data, callbacks) => {
-          callbacks.paymentError('some error message')
-        })
-
-        it('returns UNPROCESSABLE_ENTITY status', async () => {
-          await request(app)
-            .post('/base-route/receive-transaction/name@domain.com')
-            .send({
-              transactions: [],
-              metadata: {}
-            })
-            .expect(HttpStatus.UNPROCESSABLE_ENTITY)
-        })
-
-        it('returns proper error body', async () => {
-          const response = await request(app)
-            .post('/base-route/receive-transaction/name@domain.com')
-            .send({
-              transactions: [],
-              metadata: {}
-            })
-          expect(response.body).to.be.eql({
-            code: 'tx-error',
-            message: 'some error message'
-          })
-        })
       })
 
       describe('but throws an error', () => {
@@ -239,7 +131,7 @@ describe('receive transaction router', () => {
           await request(app)
             .post('/base-route/receive-transaction/name@domain.com')
             .send({
-              transactions: [],
+              hex: 'asdads',
               metadata: {}
             })
             .expect(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -249,7 +141,7 @@ describe('receive transaction router', () => {
           const response = await request(app)
             .post('/base-route/receive-transaction/name@domain.com')
             .send({
-              transactions: [],
+              hex: 'asdasd',
               metadata: {}
             })
           expect(response.body).to.be.eql({
@@ -259,31 +151,31 @@ describe('receive transaction router', () => {
         })
       })
 
-      describe('when the callback calls the unexpectedError handler', () => {
-        def('receiveTransaction', () => (_local, _domain, _data, callbacks) => {
-          callbacks.unexpectedError('some error message')
+      describe('but it returns null', () => {
+        def('receiveTransaction', () => () => {
+          return null
         })
 
-        it('returns INTERNAL_SERVER_ERROR status', async () => {
+        it('returns NOT_FOUND status', async () => {
           await request(app)
             .post('/base-route/receive-transaction/name@domain.com')
             .send({
-              transactions: [],
+              hex: 'somerawtx',
               metadata: {}
             })
-            .expect(HttpStatus.INTERNAL_SERVER_ERROR)
+            .expect(HttpStatus.NOT_FOUND)
         })
 
         it('returns proper error body', async () => {
           const response = await request(app)
             .post('/base-route/receive-transaction/name@domain.com')
             .send({
-              transactions: [],
+              hex: 'somwrawtx',
               metadata: {}
             })
           expect(response.body).to.be.eql({
-            code: 'internal-server-error',
-            message: 'Something went wrong. Please try again later'
+            code: 'not-found',
+            message: 'Paymail not found.'
           })
         })
       })
